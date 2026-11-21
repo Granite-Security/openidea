@@ -10,6 +10,7 @@
     "build": "node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit && vite build && node scripts/check-webkit.ts",
     "preview": "vite preview",
     "tauri": "node scripts/tauri.ts",
+    "package:arch": "bash scripts/package-arch.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "vitest run --config smoke/vitest.config.ts",
