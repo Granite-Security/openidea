@@ -19,6 +19,7 @@
 //! unless `GDK_BACKEND` is set.
 
 const DISABLE_DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+const DISABLE_COMPOSITING: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
 const DISABLE_EXPLICIT_SYNC: &str = "__NV_DISABLE_EXPLICIT_SYNC";
 const IM_MODULE: &str = "GTK_IM_MODULE";
 
@@ -41,6 +42,15 @@ pub fn configure() {
     if drop_fcitx_module(|k| std::env::var(k).ok()) {
         tracing::info!("GNOME Wayland with Fcitx: input method through the compositor");
         unsafe { std::env::remove_var(IM_MODULE) };
+    }
+    if disable_x11_gpu_rendering(|k| std::env::var(k).ok()) {
+        tracing::info!("X11 with WebKitGTK GPU rendering: disabling DMA-BUF and compositing");
+        if std::env::var_os(DISABLE_DMABUF).is_none() {
+            unsafe { std::env::set_var(DISABLE_DMABUF, "1") };
+        }
+        if std::env::var_os(DISABLE_COMPOSITING).is_none() {
+            unsafe { std::env::set_var(DISABLE_COMPOSITING, "1") };
+        }
     }
 }
 
@@ -121,6 +131,15 @@ fn gdk_wayland(var: &impl Fn(&str) -> Option<String>) -> bool {
     wayland_display && backend
 }
 
+/// X11 WebKitGTK can create a window successfully while leaving its composited page blank on
+/// drivers that reject the GBM buffer. The two WebKit fallbacks must be enabled together.
+fn disable_x11_gpu_rendering(var: impl Fn(&str) -> Option<String>) -> bool {
+    let display = var("DISPLAY").is_some_and(|v| !v.is_empty());
+    let backend =
+        var("GDK_BACKEND").is_none_or(|b| matches!(b.split(',').next().map(str::trim), Some("x11" | "*" | "")));
+    display && backend && !gdk_wayland(&var)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +162,24 @@ mod tests {
     fn keeps_the_users_own_setting() {
         assert!(!decide(&[("WAYLAND_DISPLAY", "wayland-0"), (DISABLE_DMABUF, "1")], true));
         assert!(!decide(&[("WAYLAND_DISPLAY", "wayland-0"), (DISABLE_EXPLICIT_SYNC, "0")], true));
+    }
+
+    #[test]
+    fn disables_x11_gpu_rendering_when_running_on_xorg() {
+        assert!(disable_x11_gpu_rendering(|key| match key {
+            "DISPLAY" => Some(":0".to_owned()),
+            _ => None,
+        }));
+        assert!(!disable_x11_gpu_rendering(|key| match key {
+            "WAYLAND_DISPLAY" => Some("wayland-0".to_owned()),
+            "DISPLAY" => Some(":0".to_owned()),
+            _ => None,
+        }));
+        assert!(!disable_x11_gpu_rendering(|key| match key {
+            "DISPLAY" => Some(":0".to_owned()),
+            "GDK_BACKEND" => Some("wayland".to_owned()),
+            _ => None,
+        }));
     }
 
     fn decide_im(vars: &[(&str, &str)], installed: bool) -> bool {
