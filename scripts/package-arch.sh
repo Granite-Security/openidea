@@ -22,7 +22,7 @@ esac
 [[ $(uname -m) == x86_64 ]] || fail 'The OpenIDEA Arch recipe requires x86_64.'
 (( EUID != 0 )) || fail 'Run this command as a regular user. makepkg cannot run as root.'
 
-repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P) ||
+repo_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P) ||
   fail 'Could not resolve the OpenIDEA repository root.'
 [[ $(pwd -P) == "$repo_root" && -f package.json && -f Cargo.toml ]] ||
   fail 'Run pnpm package:arch from the OpenIDEA repository root.'
@@ -75,12 +75,16 @@ build_paths=$(jq -Rse --arg manifest "$manifest" '
 ' "$build_log") || fail 'Could not locate the OpenIDEA release artifacts from the Tauri build.'
 
 release_binary=$(jq -r '.executable' <<< "$build_paths")
-build_out=$(jq -r '.out_dir' <<< "$build_paths")
 [[ $release_binary == /*/release/openidea && -f $release_binary && -s $release_binary && -x $release_binary ]] ||
   fail "Missing executable release binary at $release_binary."
+source_checksum=$(sha256sum < "$release_binary") || fail "Could not hash the release executable $release_binary."
 staged_binary="$stage_dir/openidea"
 cp -- "$release_binary" "$staged_binary" || fail "Could not stage the release executable from $release_binary."
+if ! source_checksum_after=$(sha256sum < "$release_binary") || [[ $source_checksum_after != "$source_checksum" ]]; then
+  fail "The release executable at $release_binary changed or could not be verified during staging. Wait for any concurrent build to finish, then rerun pnpm package:arch."
+fi
 
+build_out=$(jq -r '.out_dir' <<< "$build_paths")
 dist="$repo_root/dist"
 index="$dist/index.html"
 [[ -f $index && -s $index ]] || fail "Missing frontend index at $index. Check the Tauri frontend build."
