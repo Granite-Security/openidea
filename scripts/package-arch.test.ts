@@ -184,23 +184,31 @@ describe.skipIf(!linux)("Arch packaging wrapper", () => {
     const asset = "assets/index-A1b2C3d4.js";
     const buildOut = "target/release/build/openidea/out";
 
-    function fakeBuild(executable?: string) {
-      const events = [{ reason: "build-script-executed", package_id: "fixture", out_dir: join(root, buildOut) }];
-      const artifact = {
-        reason: "compiler-artifact",
-        package_id: "fixture",
-        manifest_path: join(root, "src-tauri/Cargo.toml"),
-        target: { name: "openidea", kind: ["bin"] },
-        executable,
-      };
-      const lines = executable === undefined ? events : [...events, artifact];
+    function fakeBuild(...executables: string[]) {
+      const lines = [
+        { reason: "build-script-executed", package_id: "fixture", out_dir: join(root, buildOut) },
+        ...executables.map((executable) => ({
+          reason: "compiler-artifact",
+          package_id: "fixture",
+          manifest_path: join(root, "src-tauri/Cargo.toml"),
+          target: { name: "openidea", kind: ["bin"] },
+          executable,
+        })),
+      ];
       writeFileSync(join(root, "cargo.log"), `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
       stub("pnpm", 'printf "%s\\0" "$@" > "$FIXTURE_ROOT/pnpm.args"\ncat "$FIXTURE_ROOT/cargo.log"');
     }
 
-    it.skipIf(!hasJq || !hasBrotli)("builds and preserves one native archive by default without sudo", async () => {
+    it.skipIf(!hasJq || !hasBrotli).each([
+      { discovery: "Cargo JSON", codegenOut: buildOut, reportExecutable: true },
+      {
+        discovery: "the release directory fallback",
+        codegenOut: "target/release/build/openidea-a1b2/out",
+        reportExecutable: false,
+      },
+    ])("builds and preserves one native archive using $discovery", async ({ codegenOut, reportExecutable }) => {
       const executable = join(root, "target/release/openidea");
-      const codegen = join(root, buildOut, "tauri-codegen-assets");
+      const codegen = join(root, codegenOut, "tauri-codegen-assets");
       const javascript = 'console.log("fixture");\n';
       mkdirSync(codegen, { recursive: true });
       mkdirSync(join(root, "dist/assets"), { recursive: true });
@@ -208,7 +216,8 @@ describe.skipIf(!linux)("Arch packaging wrapper", () => {
       writeFileSync(join(root, "dist/index.html"), `<script type="module" src="/${asset}"></script>\n`);
       writeFileSync(join(root, "dist", asset), javascript);
       writeFileSync(join(codegen, "fixture.js"), brotliCompressSync(javascript));
-      fakeBuild(executable);
+      if (reportExecutable) fakeBuild(executable);
+      else fakeBuild();
       stub(
         "makepkg",
         `printf "%s\\0" "$PWD" "$@" > "$FIXTURE_ROOT/makepkg.args"\nprintf 'fixture package\\n' > '${archive}'`,
@@ -237,13 +246,67 @@ describe.skipIf(!linux)("Arch packaging wrapper", () => {
       expect(readFileSync(output, "utf8")).toBe("fixture package\n");
     });
 
-    it.skipIf(!hasJq)("stops install mode when Cargo reports no release executable", async () => {
-      fakeBuild();
-      unexpectedTool("sudo");
+    it.skipIf(!hasJq)(
+      "stops install mode when neither Cargo nor the default path supplies a release executable",
+      async () => {
+        fakeBuild();
+        unexpectedTool("sudo");
 
-      expect(await run(["--install"])).toMatchObject({
+        expect(await run(["--install"])).toMatchObject({
+          status: 1,
+          stderr: expect.stringContaining(join(root, "target/release/openidea")),
+        });
+      },
+    );
+
+    it.skipIf(!hasJq).each([
+      { case: "missing", directories: [], count: 0 },
+      { case: "ambiguous", directories: ["openidea-a1b2", "openidea-c3d4"], count: 2 },
+    ])("rejects $case fallback codegen directories", async ({ directories, count }) => {
+      const release = join(root, "target/release");
+      mkdirSync(release, { recursive: true });
+      writeFileSync(join(release, "openidea"), "fixture executable\n", { mode: 0o755 });
+      for (const directory of directories) {
+        mkdirSync(join(release, "build", directory, "out/tauri-codegen-assets"), { recursive: true });
+      }
+      fakeBuild();
+
+      expect(await run([])).toMatchObject({
         status: 1,
-        stderr: expect.stringContaining("Could not locate the OpenIDEA release artifacts"),
+        stderr: expect.stringContaining(`found ${count} real Tauri codegen asset directories`),
+      });
+    });
+
+    it.skipIf(!hasJq)("rejects a symlink at the fallback codegen path", async () => {
+      const codegen = join(root, "target/release/build/openidea-a1b2/out/tauri-codegen-assets");
+      const external = join(root, "elsewhere");
+      mkdirSync(dirname(codegen), { recursive: true });
+      mkdirSync(external);
+      symlinkSync(external, codegen);
+      writeFileSync(join(root, "target/release/openidea"), "fixture executable\n", { mode: 0o755 });
+      fakeBuild();
+
+      expect(await run([])).toMatchObject({
+        status: 1,
+        stderr: expect.stringContaining("found 0 real Tauri codegen asset directories"),
+      });
+    });
+
+    it("reports the build failure before attempting fallback discovery", async () => {
+      stub("pnpm", "exit 1");
+
+      expect(await run([])).toMatchObject({
+        status: 1,
+        stderr: expect.stringContaining("Tauri release build failed"),
+      });
+    });
+
+    it.skipIf(!hasJq)("rejects multiple executable paths in Cargo JSON", async () => {
+      fakeBuild(join(root, "target/release/openidea"), join(root, "other-target/release/openidea"));
+
+      expect(await run([])).toMatchObject({
+        status: 1,
+        stderr: expect.stringContaining("Cargo reported multiple OpenIDEA release executables"),
       });
     });
 

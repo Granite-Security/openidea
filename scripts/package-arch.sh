@@ -63,10 +63,30 @@ build_and_package() {
     tee "$build_log" | sed -u '/^{"reason":/d' ||
     fail 'Tauri release build failed. See the build output above.'
 
-  build_paths=$(jq -Rse --arg manifest "$manifest" -f "$artifact_parser" "$build_log") ||
-    fail 'Could not locate the OpenIDEA release artifacts from the Tauri build.'
+  build_paths=$(jq -Rs --arg manifest "$manifest" -f "$artifact_parser" "$build_log") ||
+    fail 'Could not locate the OpenIDEA release artifacts from the Tauri build. Check the Cargo artifact diagnostics above.'
 
-  release_binary=$(jq -r '.executable' <<< "$build_paths")
+  shopt -s nullglob
+  if [[ $build_paths == null ]]; then
+    release_dir="$repo_root/target/release"
+    release_binary="$release_dir/openidea"
+    [[ -f $release_binary && -s $release_binary && -x $release_binary && ! -L $release_binary &&
+      $(cd -P -- "$release_dir" && pwd -P) == "$release_dir" ]] ||
+      fail "Cargo did not report a release executable. Expected a regular, nonempty executable at $release_binary inside the checkout. Check the Tauri release build output."
+
+    codegen_candidates=()
+    for candidate in "$release_dir"/build/openidea-*/out/tauri-codegen-assets; do
+      if [[ -d $candidate && $(cd -P -- "$candidate" && pwd -P) == "$candidate" ]]; then
+        codegen_candidates+=("$candidate")
+      fi
+    done
+    [[ ${#codegen_candidates[@]} == 1 ]] ||
+      fail "Cargo did not report a release executable and the fallback found ${#codegen_candidates[@]} real Tauri codegen asset directories at $release_dir/build/openidea-*/out/tauri-codegen-assets. Check the release build output and move any stale OpenIDEA build directories aside before retrying."
+    build_out=${codegen_candidates[0]%/*}
+  else
+    release_binary=$(jq -r '.executable' <<< "$build_paths")
+    build_out=$(jq -r '.out_dir' <<< "$build_paths")
+  fi
   [[ $release_binary == /*/release/openidea && -f $release_binary && -s $release_binary && -x $release_binary ]] ||
     fail "Missing executable release binary at $release_binary."
   source_checksum=$(sha256sum < "$release_binary") || fail "Could not hash the release executable $release_binary."
@@ -79,7 +99,6 @@ build_and_package() {
     fail "The staged release executable at $staged_binary differs from the original checksum or could not be verified. Wait for any concurrent build to finish, then rerun pnpm package:arch."
   fi
 
-  build_out=$(jq -r '.out_dir' <<< "$build_paths")
   dist="$repo_root/dist"
   index="$dist/index.html"
   [[ -f $index && -s $index ]] || fail "Missing frontend index at $index. Check the Tauri frontend build."
@@ -98,7 +117,6 @@ build_and_package() {
   }
 
   blob=
-  shopt -s nullglob
   for candidate in "$codegen_dir"/*.js; do
     [[ -f $candidate && -s $candidate ]] || continue
     if blob_matches_frontend "$candidate" 2>/dev/null; then
