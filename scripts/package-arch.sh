@@ -83,6 +83,9 @@ cp -- "$release_binary" "$staged_binary" || fail "Could not stage the release ex
 if ! source_checksum_after=$(sha256sum < "$release_binary") || [[ $source_checksum_after != "$source_checksum" ]]; then
   fail "The release executable at $release_binary changed or could not be verified during staging. Wait for any concurrent build to finish, then rerun pnpm package:arch."
 fi
+if ! staged_checksum=$(sha256sum < "$staged_binary") || [[ $staged_checksum != "$source_checksum" ]]; then
+  fail "The staged release executable at $staged_binary differs from the original checksum or could not be verified. Wait for any concurrent build to finish, then rerun pnpm package:arch."
+fi
 
 build_out=$(jq -r '.out_dir' <<< "$build_paths")
 dist="$repo_root/dist"
@@ -118,8 +121,7 @@ cp -- "$blob" "$staged_blob" || fail "Could not stage the Tauri frontend blob fr
 blob_matches_frontend "$staged_blob" || fail "The staged Tauri Brotli asset no longer matches $frontend_file."
 cp -- "$recipe"/{PKGBUILD,openidea.desktop,openidea.sh} "$stage_dir/" ||
   fail "Could not copy the Arch recipe files from $recipe."
-checksum=$(sha256sum < "$staged_binary") || fail "Could not hash the staged release executable $staged_binary."
-printf '%s\n' "${checksum%% *}" > "$stage_dir/openidea-tauri-production.sha256" ||
+printf '%s\n' "${staged_checksum%% *}" > "$stage_dir/openidea-tauri-production.sha256" ||
   fail "Could not write the Tauri production marker in $stage_dir."
 
 # Command-line assignments take precedence over a user's makepkg.conf paths.
