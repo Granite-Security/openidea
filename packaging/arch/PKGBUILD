@@ -1,0 +1,55 @@
+# The packaging wrapper supplies absolute paths to the checkout and the Tauri release executable.
+_repo=${OPENIDEA_REPO_ROOT:-"$startdir/../.."}
+_binary=${OPENIDEA_RELEASE_BINARY:-}
+_config="$_repo/src-tauri/tauri.conf.json"
+_linux_config="$_repo/src-tauri/tauri.linux.conf.json"
+_icon="$_repo/src-tauri/icons/128x128@2x.png"
+
+pkgname=openidea
+if [[ -z $(command -v jq) ]]; then
+  printf '%s\n' 'Install jq before running makepkg for OpenIDEA.' >&2
+  return 1
+fi
+if ! pkgver=$(jq -er '.version | strings | select(length > 0) | gsub("-"; "_")' "$_config"); then
+  printf 'Could not read the OpenIDEA version from %s\n' "$_config" >&2
+  return 1
+fi
+pkgrel=1
+pkgdesc='An open-source IDE inspired by IntelliJ IDEA'
+arch=('x86_64')
+url='https://github.com/l0ng-ai/openidea'
+license=('Apache-2.0')
+depends=('bash' 'dbus' 'gtk3' 'hicolor-icon-theme' 'webkit2gtk-4.1' 'xdg-desktop-portal' 'xdg-utils')
+makedepends=('jq')
+options=('!debug')
+
+package() {
+  if [[ -z $_binary ]]; then
+    printf '%s\n' 'Set OPENIDEA_RELEASE_BINARY to the executable produced by the Tauri release build.' >&2
+    return 1
+  fi
+  if [[ ! -f $_binary || ! -s $_binary || ! -x $_binary ]]; then
+    printf 'Missing executable release binary at %s. Run the Tauri release build first.\n' "$_binary" >&2
+    return 1
+  fi
+  if [[ ! -f $_icon || ! -s $_icon ]]; then
+    printf 'Missing bundled icon at %s. Restore the icon from the OpenIDEA checkout.\n' "$_icon" >&2
+    return 1
+  fi
+
+  # The frontend is embedded. Require an explicit package layout for any new sidecars.
+  if ! jq -es 'all(.[]; ((.bundle.resources // []) | length) == 0 and
+                        ((.bundle.externalBin // []) | length) == 0)' "$_config" "$_linux_config" >/dev/null; then
+    printf '%s\n' 'Tauri declares bundled resources or sidecars, or its config is unreadable. Check the config and update the Arch payload.' >&2
+    return 1
+  fi
+
+  install -Dm755 "$_binary" "$pkgdir/usr/lib/openidea/openidea"
+  # Tauri resolves Linux resources using the case-sensitive product name.
+  ln -s openidea "$pkgdir/usr/lib/OpenIDEA"
+  install -Dm755 "$startdir/openidea.sh" "$pkgdir/usr/bin/openidea"
+  install -Dm644 "$startdir/openidea.desktop" "$pkgdir/usr/share/applications/openidea.desktop"
+  install -Dm644 "$_icon" "$pkgdir/usr/share/icons/hicolor/256x256/apps/openidea.png"
+  install -Dm644 -t "$pkgdir/usr/share/licenses/openidea" \
+    "$_repo/LICENSE" "$_repo/NOTICE" "$_repo/THIRD_PARTY_LICENSES.md"
+}
