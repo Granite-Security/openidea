@@ -25,6 +25,7 @@ options=('!debug')
 
 package() {
   local marker="$startdir/openidea-tauri-production.sha256" expected actual
+  local frontend_asset=${OPENIDEA_FRONTEND_ASSET:-} frontend_dist="$_repo/dist"
   local staged_binary="$pkgdir/usr/lib/openidea/openidea"
 
   if [[ -z $_binary ]]; then
@@ -46,6 +47,16 @@ package() {
     return 1
   fi
 
+  if [[ -z $frontend_asset ]]; then
+    printf '%s\n' 'Set OPENIDEA_FRONTEND_ASSET to the built JavaScript entry path from dist/index.html.' >&2
+    return 1
+  fi
+  if [[ ! $frontend_asset =~ ^/assets/index-[A-Za-z0-9_-]{8,}\.js$ || ! -s $frontend_dist$frontend_asset ]] ||
+    ! grep -Fq -- "src=\"$frontend_asset\"" "$frontend_dist/index.html"; then
+    printf 'Invalid built frontend asset %s. Rerun the Arch packaging wrapper.\n' "$frontend_asset" >&2
+    return 1
+  fi
+
   if [[ ! -f $_icon || ! -s $_icon ]]; then
     printf 'Missing bundled icon at %s. Restore the icon from the OpenIDEA checkout.\n' "$_icon" >&2
     return 1
@@ -61,6 +72,11 @@ package() {
   install -Dm755 "$_binary" "$staged_binary" || return 1
   if ! actual=$(sha256sum < "$staged_binary") || [[ ${actual%% *} != "$expected" ]]; then
     printf 'Release binary %s does not match the Tauri production build marker. Rerun the Arch packaging wrapper.\n' "$_binary" >&2
+    return 1
+  fi
+  # Tauri stores asset paths as plain-text lookup keys alongside compressed contents.
+  if ! LC_ALL=C grep -aFq -- "$frontend_asset" "$staged_binary"; then
+    printf 'Release binary %s does not contain the built frontend asset %s. Rerun the Tauri production build.\n' "$_binary" "$frontend_asset" >&2
     return 1
   fi
 
