@@ -24,6 +24,9 @@ makedepends=('jq')
 options=('!debug')
 
 package() {
+  local marker="$startdir/openidea-tauri-production.sha256" expected actual
+  local staged_binary="$pkgdir/usr/lib/openidea/openidea"
+
   if [[ -z $_binary ]]; then
     printf '%s\n' 'Set OPENIDEA_RELEASE_BINARY to the executable produced by the Tauri release build.' >&2
     return 1
@@ -32,6 +35,17 @@ package() {
     printf 'Missing executable release binary at %s. Run the Tauri release build first.\n' "$_binary" >&2
     return 1
   fi
+
+  # The wrapper records the binary's SHA-256 only after the production Tauri build succeeds.
+  if [[ ! -f $marker || ! -r $marker ]]; then
+    printf 'Missing Tauri production build marker at %s. Run the Arch packaging wrapper.\n' "$marker" >&2
+    return 1
+  fi
+  if ! expected=$(<"$marker") || [[ ! $expected =~ ^[0-9a-f]{64}$ ]]; then
+    printf 'Invalid Tauri production build marker at %s. Rerun the Arch packaging wrapper.\n' "$marker" >&2
+    return 1
+  fi
+
   if [[ ! -f $_icon || ! -s $_icon ]]; then
     printf 'Missing bundled icon at %s. Restore the icon from the OpenIDEA checkout.\n' "$_icon" >&2
     return 1
@@ -44,7 +58,12 @@ package() {
     return 1
   fi
 
-  install -Dm755 "$_binary" "$pkgdir/usr/lib/openidea/openidea"
+  install -Dm755 "$_binary" "$staged_binary" || return 1
+  if ! actual=$(sha256sum < "$staged_binary") || [[ ${actual%% *} != "$expected" ]]; then
+    printf 'Release binary %s does not match the Tauri production build marker. Rerun the Arch packaging wrapper.\n' "$_binary" >&2
+    return 1
+  fi
+
   # Tauri resolves Linux resources using the case-sensitive product name.
   ln -s openidea "$pkgdir/usr/lib/OpenIDEA"
   install -Dm755 "$startdir/openidea.sh" "$pkgdir/usr/bin/openidea"
