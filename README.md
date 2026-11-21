@@ -39,6 +39,71 @@ On macOS you can also install it with Homebrew:
 brew install --cask l0ng-ai/tap/openidea
 ```
 
+## Deploy on Arch Linux
+
+This x86_64 workflow builds a local Arch `.pkg.tar.zst` from your checkout.
+Pacman owns the installed files system-wide. This workflow does not produce
+`.deb`, `.rpm`, or AppImage bundles or use the AUR or `yay`.
+
+Set up Rust, Node.js, pnpm, and the Arch system libraries for Tauri. Install
+the package recipe's `depends` and `makedepends` before building. Run the
+commands below from the repository root as a regular user. See the
+[development setup](docs/en/contribute/setup.mdx), [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux),
+and [Arch package recipe](packaging/arch/PKGBUILD).
+
+### Build the package
+
+```sh
+pnpm install --frozen-lockfile
+pnpm package:arch
+```
+
+`pnpm package:arch` runs a Tauri release build with `--no-bundle` and writes
+`target/arch/openidea-<version>-1-x86_64.pkg.tar.zst` without installing it.
+
+### Install or upgrade
+
+From your existing checkout, pull changes and rebuild the package. `--install`
+runs `sudo pacman -U` on the archive after a successful build.
+
+```sh
+git pull --ff-only
+pnpm install --frozen-lockfile
+pnpm package:arch --install
+openidea
+```
+
+The command is installed at `/usr/bin/openidea`, the app files are in
+`/usr/lib/openidea`, and the menu entry is
+`/usr/share/applications/openidea.desktop`.
+
+### Uninstall
+
+```sh
+sudo pacman -R openidea
+```
+
+### Troubleshoot launching from Cinnamon
+
+Search for **OpenIDEA** in the Cinnamon menu. If it is missing or clicking it
+does nothing, run these checks from a terminal in your Cinnamon session.
+
+```sh
+pacman -Qkk openidea
+command -v openidea
+/usr/bin/openidea
+```
+
+- If pacman reports missing package files, rerun `pnpm package:arch --install`.
+- If `command -v openidea` points somewhere other than `/usr/bin/openidea`,
+  use the absolute path above to test the packaged launcher. Its terminal
+  output can show errors that the menu hides.
+- If the terminal launch works, check for an older `openidea.desktop` in
+  `${XDG_DATA_HOME:-$HOME/.local/share}/applications/` that may take precedence
+  over the system entry. Move any stale override out of that directory. If
+  the entry still does not appear, sign out of Cinnamon and back in.
+  See the [desktop entry precedence rules](https://specifications.freedesktop.org/desktop-entry/latest-single/#desktop-file-id).
+
 ## Benchmark
 
 Opening [freqtrade](https://github.com/freqtrade/freqtrade) (Python, ~770 files)
