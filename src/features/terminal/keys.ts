@@ -117,6 +117,8 @@ const ALLOWED_ACTION_IDS = new Set([
   "vcs.push",
   "file.settings",
   "navigate.recentFiles",
+  "navigate.back",
+  "navigate.forward",
   "navigate.switcher",
   "navigate.switcherBack",
   "terminal.new",
